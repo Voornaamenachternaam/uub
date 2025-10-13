@@ -1,0 +1,85 @@
+name: Build Ubuntu Server LTS Image
+
+on:
+  schedule:
+    - cron: '0 0 * * *'  # Daily at midnight UTC
+  workflow_dispatch:
+
+jobs:
+  check-and-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5.0.0
+
+      - name: Install QEMU dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y qemu-system-x86 qemu-utils
+
+      - name: Get latest LTS version and codename
+        run: |
+          curl -s https://changelogs.ubuntu.com/meta-release-lts -o meta-release-lts
+          LATEST_VERSION=$(awk '/version =/ {version=$3 " " $4} END {print version}' meta-release-lts)
+          LATEST_CODENAME=$(awk '/codename =/ {codename=$3} END {print codename}' meta-release-lts)
+          echo "LATEST_VERSION=$LATEST_VERSION" >> $GITHUB_ENV
+          echo "LATEST_CODENAME=$LATEST_CODENAME" >> $GITHUB_ENV
+
+      - name: Check if newer LTS available
+        run: |
+          if [ -f current_version.txt ]; then
+            CURRENT_VERSION=$(cat current_version.txt)
+          else
+            CURRENT_VERSION="24.04 LTS"
+          fi
+          if [ "$LATEST_VERSION" != "$CURRENT_VERSION" ]; then
+            echo "New LTS version detected: $LATEST_VERSION"
+            echo "BUILD=true" >> $GITHUB_ENV
+          else
+            echo "No new LTS version."
+            echo "BUILD=false" >> $GITHUB_ENV
+          fi
+
+      - name: Get latest ISO details for the LTS
+        if: env.BUILD == 'true'
+        run: |
+          SHA256SUMS=$(curl -s https://releases.ubuntu.com/${{ env.LATEST_CODENAME }}/SHA256SUMS)
+          ISO_NAME=$(echo "$SHA256SUMS" | grep 'live-server-amd64\.iso' | awk '{print $2}' | tr -d '*')
+          ISO_CHECKSUM=$(echo "$SHA256SUMS" | grep 'live-server-amd64\.iso' | awk '{print $1}')
+          ISO_URL="https://releases.ubuntu.com/${{ env.LATEST_CODENAME }}/$ISO_NAME"
+          echo "ISO_URL=$ISO_URL" >> $GITHUB_ENV
+          echo "ISO_CHECKSUM=sha256:$ISO_CHECKSUM" >> $GITHUB_ENV
+
+      - name: Setup Packer
+        if: env.BUILD == 'true'
+        uses: hashicorp/setup-packer@v3.1.0
+
+      - name: Packer init
+        if: env.BUILD == 'true'
+        run: packer init packer/ubuntu.pkr.hcl
+
+      - name: Packer build
+        if: env.BUILD == 'true'
+        run: |
+          packer build \
+            -var "iso_url=${{ env.ISO_URL }}" \
+            -var "iso_checksum=${{ env.ISO_CHECKSUM }}" \
+            -var "version=${{ env.LATEST_VERSION }}" \
+            packer/ubuntu.pkr.hcl
+
+      - name: Upload image as artifact
+        if: env.BUILD == 'true'
+        uses: actions/upload-artifact@v4.6.2
+        with:
+          name: ubuntu-${{ env.LATEST_VERSION }}-x86_64-v3.qcow2
+          path: packer/output/ubuntu-${{ env.LATEST_VERSION }}-x86_64-v3.qcow2
+          retention-days: 365
+
+      - name: Update tracked LTS version
+        if: env.BUILD == 'true'
+        run: |
+          echo "${{ env.LATEST_VERSION }}" > current_version.txt
+          git config user.name "GitHub Action"
+          git config user.email "action@github.com"
+          git add current_version.txt
+          git commit -m "Update to new LTS version ${{ env.LATEST_VERSION }}"
+          git push
