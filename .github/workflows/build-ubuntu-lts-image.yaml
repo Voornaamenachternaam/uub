@@ -19,39 +19,40 @@ jobs:
       - name: Get latest LTS version and codename
         run: |
           curl -s https://changelogs.ubuntu.com/meta-release-lts -o meta-release-lts
-          LATEST_VERSION=$(awk '/^Version:/ {version=$2 " " $3} END {print version}' meta-release-lts)
+          FULL_VERSION=$(awk '/^Version:/ {version=$2} END {print version}' meta-release-lts)
           LATEST_CODENAME=$(awk '/^Dist:/ {codename=$2} END {print codename}' meta-release-lts)
+          LATEST_VERSION=$(echo "$FULL_VERSION" | awk '{split($1, a, "."); print a[1]"."a[2] " LTS"}')
+          VERSION_SHORT=$(echo "$FULL_VERSION" | awk '{print $1}')
           echo "LATEST_VERSION=$LATEST_VERSION" >> $GITHUB_ENV
           echo "LATEST_CODENAME=$LATEST_CODENAME" >> $GITHUB_ENV
-          echo "VERSION_SHORT=$(echo "$LATEST_VERSION" | cut -d' ' -f1)" >> $GITHUB_ENV
+          echo "VERSION_SHORT=$VERSION_SHORT" >> $GITHUB_ENV
 
       - name: Check if newer LTS available
         run: |
-          if [ -z "${{ env.LATEST_VERSION }}" ] || [ -z "${{ env.LATEST_CODENAME }}" ]; then
-            echo "Failed to parse LTS info."
-            echo "BUILD=false" >> $GITHUB_ENV
+          if [ -f current_version.txt ]; then
+            CURRENT_VERSION=$(cat current_version.txt)
           else
-            if [ -f current_version.txt ]; then
-              CURRENT_VERSION=$(cat current_version.txt)
-            else
-              CURRENT_VERSION="24.04 LTS"
-            fi
-            if [ "${{ env.LATEST_VERSION }}" != "$CURRENT_VERSION" ]; then
-              echo "New LTS version detected: ${{ env.LATEST_VERSION }}"
-              echo "BUILD=true" >> $GITHUB_ENV
-            else
-              echo "No new LTS version."
-              echo "BUILD=false" >> $GITHUB_ENV
-            fi
+            CURRENT_VERSION="24.04 LTS"
+          fi
+          if [ "$LATEST_VERSION" != "$CURRENT_VERSION" ]; then
+            echo "New major LTS version detected: $LATEST_VERSION (full: $VERSION_SHORT)"
+            echo "BUILD=true" >> $GITHUB_ENV
+          else
+            echo "No new major LTS version."
+            echo "BUILD=false" >> $GITHUB_ENV
           fi
 
       - name: Get latest ISO details for the LTS
         if: env.BUILD == 'true'
         run: |
           SHA256SUMS=$(curl -s https://releases.ubuntu.com/${{ env.LATEST_CODENAME }}/SHA256SUMS)
-          ISO_NAME=$(echo "$SHA256SUMS" | grep 'live-server-amd64\.iso' | awk '{print $2}' | tr -d '*')
-          ISO_CHECKSUM=$(echo "$SHA256SUMS" | grep 'live-server-amd64\.iso' | awk '{print $1}')
+          ISO_NAME=$(echo "$SHA256SUMS" | grep 'live-server-amd64\.iso' | head -1 | awk '{print $2}' | tr -d '*')
+          ISO_CHECKSUM=$(echo "$SHA256SUMS" | grep 'live-server-amd64\.iso' | head -1 | awk '{print $1}')
           ISO_URL="https://releases.ubuntu.com/${{ env.LATEST_CODENAME }}/$ISO_NAME"
+          if [ -z "$ISO_NAME" ]; then
+            echo "No ISO found for codename ${{ env.LATEST_CODENAME }}"
+            exit 1
+          fi
           echo "ISO_URL=$ISO_URL" >> $GITHUB_ENV
           echo "ISO_CHECKSUM=sha256:$ISO_CHECKSUM" >> $GITHUB_ENV
 
@@ -62,10 +63,6 @@ jobs:
       - name: Packer init
         if: env.BUILD == 'true'
         run: packer init packer/ubuntu.pkr.hcl
-
-      - name: Install QEMU plugin (fallback)
-        if: env.BUILD == 'true'
-        run: packer plugins install github.com/hashicorp/qemu
 
       - name: Packer build
         if: env.BUILD == 'true'
@@ -78,7 +75,7 @@ jobs:
 
       - name: Upload image as artifact
         if: env.BUILD == 'true'
-        uses: actions/upload-artifact@v4.6.2
+        uses: actions/upload-artifact@v5.0.0
         with:
           name: ubuntu-${{ env.VERSION_SHORT }}-x86_64-v3.qcow2
           path: output/ubuntu-${{ env.VERSION_SHORT }}-x86_64-v3.qcow2
