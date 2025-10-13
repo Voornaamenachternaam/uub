@@ -27,17 +27,22 @@ jobs:
 
       - name: Check if newer LTS available
         run: |
-          if [ -f current_version.txt ]; then
-            CURRENT_VERSION=$(cat current_version.txt)
-          else
-            CURRENT_VERSION="24.04 LTS"
-          fi
-          if [ "$LATEST_VERSION" != "$CURRENT_VERSION" ]; then
-            echo "New LTS version detected: $LATEST_VERSION"
-            echo "BUILD=true" >> $GITHUB_ENV
-          else
-            echo "No new LTS version."
+          if [ -z "${{ env.LATEST_VERSION }}" ] || [ -z "${{ env.LATEST_CODENAME }}" ]; then
+            echo "Failed to parse LTS info."
             echo "BUILD=false" >> $GITHUB_ENV
+          else
+            if [ -f current_version.txt ]; then
+              CURRENT_VERSION=$(cat current_version.txt)
+            else
+              CURRENT_VERSION="24.04 LTS"
+            fi
+            if [ "${{ env.LATEST_VERSION }}" != "$CURRENT_VERSION" ]; then
+              echo "New LTS version detected: ${{ env.LATEST_VERSION }}"
+              echo "BUILD=true" >> $GITHUB_ENV
+            else
+              echo "No new LTS version."
+              echo "BUILD=false" >> $GITHUB_ENV
+            fi
           fi
 
       - name: Get latest ISO details for the LTS
@@ -57,6 +62,10 @@ jobs:
       - name: Packer init
         if: env.BUILD == 'true'
         run: packer init packer/ubuntu.pkr.hcl
+
+      - name: Install QEMU plugin (fallback)
+        if: env.BUILD == 'true'
+        run: packer plugins install github.com/hashicorp/qemu
 
       - name: Packer build
         if: env.BUILD == 'true'
