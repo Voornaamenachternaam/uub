@@ -11,18 +11,19 @@ jobs:
     steps:
       - uses: actions/checkout@v5.0.0
 
-      - name: Install QEMU dependencies
+      - name: Install QEMU and OVMF dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y qemu-system-x86 qemu-utils
+          sudo apt-get install -y qemu-system-x86 qemu-utils ovmf
 
       - name: Get latest LTS version and codename
         run: |
           curl -s https://changelogs.ubuntu.com/meta-release-lts -o meta-release-lts
-          LATEST_VERSION=$(awk '/version =/ {version=$3 " " $4} END {print version}' meta-release-lts)
-          LATEST_CODENAME=$(awk '/codename =/ {codename=$3} END {print codename}' meta-release-lts)
+          LATEST_VERSION=$(awk '/^Version:/ {version=$2 " " $3} END {print version}' meta-release-lts)
+          LATEST_CODENAME=$(awk '/^Dist:/ {codename=$2} END {print codename}' meta-release-lts)
           echo "LATEST_VERSION=$LATEST_VERSION" >> $GITHUB_ENV
           echo "LATEST_CODENAME=$LATEST_CODENAME" >> $GITHUB_ENV
+          echo "VERSION_SHORT=$(echo "$LATEST_VERSION" | cut -d' ' -f1)" >> $GITHUB_ENV
 
       - name: Check if newer LTS available
         run: |
@@ -63,16 +64,16 @@ jobs:
           packer build \
             -var "iso_url=${{ env.ISO_URL }}" \
             -var "iso_checksum=${{ env.ISO_CHECKSUM }}" \
-            -var "version=${{ env.LATEST_VERSION }}" \
+            -var "version_short=${{ env.VERSION_SHORT }}" \
             packer/ubuntu.pkr.hcl
 
       - name: Upload image as artifact
         if: env.BUILD == 'true'
         uses: actions/upload-artifact@v4.6.2
         with:
-          name: ubuntu-${{ env.LATEST_VERSION }}-x86_64-v3.qcow2
-          path: packer/output/ubuntu-${{ env.LATEST_VERSION }}-x86_64-v3.qcow2
-          retention-days: 365
+          name: ubuntu-${{ env.VERSION_SHORT }}-x86_64-v3.qcow2
+          path: output/ubuntu-${{ env.VERSION_SHORT }}-x86_64-v3.qcow2
+          retention-days: 90
 
       - name: Update tracked LTS version
         if: env.BUILD == 'true'
