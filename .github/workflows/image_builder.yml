@@ -1,12 +1,10 @@
 name: Ubuntu Server LTS v3 Image Builder
-run-name: Build Ubuntu Server ${{ github.event.inputs.lts_version |
-
-| 'LTS' }} v3 Image
+run-name: Build Ubuntu Server ${{ github.event.inputs.lts_version || 'LTS' }} v3 Image
 
 on:
   schedule:
     # Daily check at 03:30 UTC to avoid high load periods at the start of the hour
-    - cron: '30 3 * * *' 
+    - cron: '30 3 * * *'
   workflow_dispatch:
 
 permissions:
@@ -18,20 +16,20 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-check_version:
+  check_version:
     runs-on: ubuntu-latest
     outputs:
       new_version_found: ${{ steps.compare.outputs.new_version_found }}
       latest_lts: ${{ steps.compare.outputs.latest_lts }}
-      
+
     steps:
     - name: Checkout Repository and State File
-      uses: actions/checkout@v4
+      uses: actions/checkout@v5.0.0
 
     - name: Read Last Known LTS Version
       id: read_state
       run: |
-        if; then
+        if [ -f LAST_LTS_VERSION ]; then # FIX: Added conditional check for file existence
           LAST_VERSION=$(cat LAST_LTS_VERSION)
           echo "Last known successful build: $LAST_VERSION"
         else
@@ -39,7 +37,7 @@ check_version:
           echo "No previous version state found. Setting base to 0.00."
         fi
         echo "last_lts=$LAST_VERSION" >> $GITHUB_OUTPUT
-        
+
     - name: Discover Latest Ubuntu Server LTS Version
       id: discover
       run: |
@@ -47,7 +45,7 @@ check_version:
         # Placeholder for complex parsing logic, aiming for '24.04', '26.04', etc.
         # This implementation uses curl and regex to identify the latest major LTS.
         LATEST_VERSION=$(curl -s https://releases.ubuntu.com/ | grep -Eo 'href="([0-9]{2})\.04/"' | sort -V | tail -1 | grep -Eo '[0-9]{2}\.[0-9]{2}')
-        if; then
+        if [ -z "$LATEST_VERSION" ]; then # FIX: Added conditional check for empty variable
           echo "Failed to determine latest LTS version."
           exit 1
         fi
@@ -59,9 +57,9 @@ check_version:
       run: |
         LAST_LTS="${{ steps.read_state.outputs.last_lts }}"
         LATEST_LTS="${{ steps.discover.outputs.latest_lts }}"
-        
+
         # Simple string comparison relies on standard Ubuntu numeric versioning (24.04 > 22.04)
-        if echo -e "$LAST_LTS\n$LATEST_LTS" | sort -V | tail -1 | grep -q "$LATEST_LTS" &&; then
+        if echo -e "$LAST_LTS\n$LATEST_LTS" | sort -V | tail -1 | grep -q "$LATEST_LTS" && [ "$LAST_LTS" != "$LATEST_LTS" ]; then # FIX: Added comparison logic
           echo "New LTS version ($LATEST_LTS) found. Triggering build."
           echo "new_version_found=true" >> $GITHUB_OUTPUT
         else
@@ -77,7 +75,7 @@ check_version:
 
     steps:
     - name: Checkout Repository and Packer Templates
-      uses: actions/checkout@v4
+      uses: actions/checkout@v5.0.0
       with:
         submodules: true # Ensure canonical/packer-maas or similar templates are available
 
@@ -85,43 +83,45 @@ check_version:
       run: |
         sudo apt update
         # Essential tools for QEMU/KVM virtualization and image handling
-        sudo apt install -y qemu-system qemu-utils ovmf cloud-image-utils [13]
-        
+        sudo apt install -y qemu-system qemu-utils ovmf cloud-image-utils 
+
     - name: Install Packer and Initialize Plugins
-      uses: hashicorp/setup-packer@v1
+      uses: hashicorp/setup-packer@v3.1.0
       with:
         version: latest
+    # The 'run' block was incorrectly nested under 'uses'. Moving it to a separate step.
+    - name: Initialize Packer Plugins
       run: |
-        packer init./packer_templates/ubuntu # Assumes local template path
-        
+        packer init ./packer_templates/ubuntu # Assumes local template path
+
     - name: Build x86_64 v3 Ubuntu Server Image
       id: packer_build
       env:
         UBUNTU_VERSION: ${{ needs.check_version.outputs.latest_lts }}
-        
+
       run: |
         # Execute Packer build, dynamically passing the version variable.
-        # The underlying HCL template (e.g., ubuntu.pkr.hcl) must accept UBUNTU_VERSION 
+        # The underlying HCL template (e.g., ubuntu.pkr.hcl) must accept UBUNTU_VERSION
         # and reference the autoinstall files containing the v3 optimization script.
-        cd./packer_templates/ubuntu
+        cd ./packer_templates/ubuntu
         packer build \
           -var 'ubuntu_series=${{ env.UBUNTU_VERSION }}' \
           ubuntu.pkr.hcl
-        
+
     - name: Locate and Define Artifact Path
       id: set_path
       run: |
-        # Assume Packer output is a compressed file (e.g., ubuntu-${VERSION}-custom.tgz) 
+        # Assume Packer output is a compressed file (e.g., ubuntu-${VERSION}-custom.tgz)
         # in the template directory.
-        IMAGE_FILE=$(ls -1./packer_templates/ubuntu/ubuntu-${{ needs.check_version.outputs.latest_lts }}-custom.tgz)
+        IMAGE_FILE=$(ls -1 ./packer_templates/ubuntu/ubuntu-${{ needs.check_version.outputs.latest_lts }}-custom.tgz)
         echo "artifact_path=$IMAGE_FILE" >> $GITHUB_OUTPUT
-        
+
     - name: Upload Image Artifact (for VM/Bare Metal Use)
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v4.6.2
       with:
         name: ubuntu-server-x86_64-v3-${{ needs.check_version.outputs.latest_lts }}
         path: ${{ steps.set_path.outputs.artifact_path }}
-        # Set long retention period (max 400 days for private repos) [25, 27]
+        # Set long retention period (max 400 days for private repos)
         retention-days: 365
 
   update_state:
@@ -129,19 +129,19 @@ check_version:
     needs: [check_version, build_image]
     # Critical: Only run if the build_image job successfully completed
     if: success() && needs.check_version.outputs.new_version_found == 'true'
-    
+
     steps:
     - name: Checkout Repository
-      uses: actions/checkout@v4
-      
+      uses: actions/checkout@v5.0.0
+
     - name: Write New Version to State File
       run: |
         NEW_VERSION="${{ needs.check_version.outputs.latest_lts }}"
         echo "$NEW_VERSION" > LAST_LTS_VERSION
         echo "State file updated to $NEW_VERSION."
-        
+
     - name: Commit State File Update to Repository
-      uses: stefanzweifel/git-auto-commit-action@v6
+      uses: stefanzweifel/git-auto-commit-action@v7.0.0
       with:
         commit_message: "CI: Update LAST_LTS_VERSION to ${{ needs.check_version.outputs.latest_lts }} (v3 optimized build)"
-        branch: ${{ github.ref_name }} # Commit to the default branch 
+        branch: ${{ github.ref_name }} # Commit to the default branch
