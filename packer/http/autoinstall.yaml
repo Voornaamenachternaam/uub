@@ -1,0 +1,19 @@
+#cloud-config
+autoinstall:
+  version: 1
+  locale: en_US.UTF-8
+  keyboard:
+    layout: us
+  identity:
+    hostname: ubuntu-server
+    username: ubuntu
+    password: "$6$exDY1mhS$4meK0N46p6iDlcR4f6kuQJAFcHWLBlexC/f//IL2aKtz3YfD7ysWdQAzLz2.4su/SpHFuogl0wqRw78nhQfRk"
+  ssh:
+    install-server: true
+    allow-pw: true
+  storage:
+    layout:
+      name: direct
+  updates: security
+  packages:
+    - openssh-server
