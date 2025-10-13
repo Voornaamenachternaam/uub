@@ -75,7 +75,7 @@ jobs:
 
       - name: Upload image as artifact
         if: env.BUILD == 'true'
-        uses: actions/upload-artifact@v5.0.0
+        uses: actions/upload-artifact@v4.6.2
         with:
           name: ubuntu-${{ env.VERSION_SHORT }}-x86_64-v3.qcow2
           path: output/ubuntu-${{ env.VERSION_SHORT }}-x86_64-v3.qcow2
